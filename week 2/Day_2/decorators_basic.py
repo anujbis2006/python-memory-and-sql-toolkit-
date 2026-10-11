@@ -133,6 +133,7 @@ def display_info(name,age):
 display_info('Anuj', 20)  # Output: Display_info ran with arguments (Anuj, 20)
 
 
+from ast import arg
 import time
 
 @my_timer
@@ -210,3 +211,57 @@ display_info('Anuj', 20)
 # so here we use the @wraps decorator from the functools module to preserve the original function's metadata (like its name and docstring) when we wrap it with our decorator.
 # a nf we didn;t have to wirte manually for another fucntion of my logger and my timer we can use the @wraps decorator to preserve the original function's metadata
 # (like its name and docstring) when we wrap it with our decorator.
+
+
+# 1.Problem 1 timing function execution time
+import time
+def timer(func):
+    def wrapper(*args,**kwargs):
+        start_time = time.time()
+        result  = func(*args,**kwargs)
+        end_time = time.time()
+        print(f"Function {func.__name__} took {end_time - start_time} seconds to execute.")
+        return result
+    return wrapper
+
+@timer
+def log_time(n):
+    time.sleep(n)
+    print(f"Function executed after {n} seconds.")
+# output - fucntion log_time took 2.002 seconds to execute.
+
+# 2. Debugging Fucntions Calls
+
+def debug(func):
+    def wrapper(*args,**kwrags):
+        args_value = ', '.join(str(arg) for arg in args)
+        kwargs_value = ', '.join(f"{k}={v}" for k,v in kwrags.items())
+        print(f"Calling {func.__name__} with arguments: {args_value} and keyword arguments: {kwargs_value}")
+        return func(*args,**kwrags)
+        return wrapper
+@debug
+def greet(name , greeting = "Hello"):
+    print(f"{greeting}, {name}!")
+
+    # 3. cach return values of a function
+    import time
+def cache(func):
+    cached_results = {}
+    def wrapper(*args):
+        if args in cached_results:
+            return cached_results[args]
+
+        result = func(*args)
+        cached_results[args] = result
+        return result
+    return wrapper
+
+
+
+def long_running_function(a,b):
+    time.sleep(4)
+    return a+b
+
+
+long_running_function = cache(2,3)
+long_running_function(2,3)  # This will take 4 seconds to execute and return 5
