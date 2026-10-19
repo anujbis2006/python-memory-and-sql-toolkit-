@@ -24,10 +24,12 @@ By the end of this lesson, you should be able to:
 3. [Part 1: students, marks, and profiles](#part-1-students-marks-and-profiles)
 4. [Part 2: products and orders](#part-2-products-and-orders)
 5. [Part 3: many-to-many student enrolment](#part-3-many-to-many-student-enrolment)
-6. [Expected outputs](#expected-outputs)
-7. [Exercises to try](#exercises-to-try)
-8. [Important notes about the current SQL file](#important-notes-about-the-current-sql-file)
-9. [Quick revision](#quick-revision)
+6. [Part 4: views](#part-4-views)
+7. [Part 5: stored procedures](#part-5-stored-procedures)
+8. [Expected outputs](#expected-outputs)
+9. [Exercises to try](#exercises-to-try)
+10. [Important notes about the current SQL file](#important-notes-about-the-current-sql-file)
+11. [Quick revision](#quick-revision)
 
 ## How to run the lesson
 
@@ -387,6 +389,114 @@ Expected output:
  Power BI
 ```
 
+## Part 4: views
+
+A **view** is a named, reusable SQL query. It behaves like a virtual table:
+when the view is queried, PostgreSQL reads the current data from its
+underlying tables. A normal view does not store a separate copy of the result.
+
+The Day 6 script first writes the enrolment join directly and then saves the
+same query as `student_course_view`:
+
+```sql
+CREATE VIEW student_course_view AS
+SELECT
+    s.student_name,
+    c.course_name
+FROM student_courses AS sc
+JOIN student AS s
+    ON sc.student_id = s.student_id
+JOIN courses AS c
+    ON sc.course_id = c.course_id;
+
+SELECT * FROM student_course_view;
+```
+
+Expected output:
+
+```text
+ student_name | course_name
+--------------+-------------
+ AKASH        | SQL
+ ANUJ         | python
+ ANUJ         | Power BI
+ ROHAN        | SQL
+```
+
+Inspect the created view with:
+
+```sql
+\dv
+\d student_course_view
+```
+
+Use a view when a query is used repeatedly and you want a clear, stable
+interface for reports or application code. The view reflects changes in the
+underlying tables when it is queried.
+
+## Part 5: stored procedures
+
+A **stored procedure** is a named database operation that can accept
+parameters and contain SQL statements. PostgreSQL procedures are executed
+with `CALL`.
+
+The script demonstrates this procedure pattern:
+
+```sql
+CREATE PROCEDURE add_student(
+    p_id INT,
+    p_name VARCHAR(100)
+)
+LANGUAGE SQL
+AS $$
+    INSERT INTO students (student_id, student_name)
+    VALUES (p_id, p_name);
+$$;
+
+CALL add_student(10, 'Anuj');
+```
+
+Stored procedures are useful for:
+
+- reusing database operations;
+- grouping multiple operations into one call;
+- applying business rules and validation; and
+- automating repetitive database tasks.
+
+The intended result is a new student row with ID `10` and name `Anuj`.
+However, the earlier `students` table in this file defines the name column as
+`name`, not `student_name`. Use this corrected version with that table:
+
+```sql
+CREATE OR REPLACE PROCEDURE add_student(
+    p_id INT,
+    p_name VARCHAR(100)
+)
+LANGUAGE SQL
+AS $$
+    INSERT INTO students (student_id, name)
+    VALUES (p_id, p_name);
+$$;
+
+CALL add_student(10, 'Anuj');
+```
+
+Verify the inserted row:
+
+```sql
+SELECT student_id, name
+FROM students
+WHERE student_id = 10;
+```
+
+Expected output:
+
+```text
+ student_id | name
+-------------+------
+          10 | Anuj
+```
+
 ## Expected outputs
 
 Use these checkpoints to confirm that each section is working:
@@ -401,6 +511,7 @@ Use these checkpoints to confirm that each section is working:
 | Electronics order IDs | 2, 3, 10, 17 |
 | Enrolment count | 4 |
 | ANUJ's courses | python, Power BI |
+| Rows returned by `student_course_view` | 4 |
 
 The exact display alignment can differ between terminals, but the values and
 row counts should match.
@@ -418,6 +529,8 @@ row counts should match.
 9. Add a new course and enrol two students in it.
 10. Try inserting a duplicate `(student_id, course_id)` pair and explain the
     primary-key error.
+11. Create a view that shows each product and its total order count.
+12. Create a procedure that adds a course, then call it and verify the row.
 
 Example solution for exercise 1:
 
@@ -461,6 +574,14 @@ with these details in mind:
 6. Table names such as `student` and `students` are different tables. This is
    intentional in the script, but using consistent plural names would make a
    production schema easier to maintain.
+7. The newly added `CREATE VIEW` section is valid for the `student`, `courses`,
+   and `student_courses` tables and returns four enrolment rows.
+8. The newly added procedure uses `students (student_id, student_name)`, but
+   the earlier `students` table defines the name column as `name`. Use the
+   corrected procedure example in this README to run it against that table.
+9. `CREATE VIEW student_course_view` and `CREATE PROCEDURE add_student` create
+   persistent database objects. If you rerun the script, drop existing objects
+   first or use `CREATE OR REPLACE` where appropriate.
 
 These notes explain why running the complete file in one pass may not produce
 every result shown above. They do not change the learning goals of the
@@ -479,4 +600,6 @@ examples.
 - `CROSS JOIN` creates every combination of rows.
 - `GROUP BY` creates groups for aggregate calculations.
 - `HAVING` filters grouped results.
-
+- A **view** stores a reusable query definition.
+- A **stored procedure** stores an executable database operation.
+- PostgreSQL runs a procedure with `CALL`.

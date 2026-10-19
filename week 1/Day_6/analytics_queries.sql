@@ -308,3 +308,60 @@ JOIN courses c
     ON sc.course_id = c.course_id
 where 
 	s.student_name = 'ANUJ';
+
+-- 1. Views — Virtual Table
+-- A VIEW is a saved SQL query that you can use like a table. It generally doesn't store the query's result data itself; 
+-- it fetches data from the underlying tables when you query it.
+
+-- Suppose you have three tables: students, courses, and student_courses.
+
+-- Normally, to see which student enrolled in which course, you would write a JOIN query every time.
+
+SELECT
+    s.student_name,
+    c.course_name
+FROM student_courses sc
+JOIN student s
+    ON sc.student_id = s.student_id
+JOIN courses c
+    ON sc.course_id = c.course_id;
+
+-- Instead, you can save this query as a view.
+CREATE VIEW student_course_view AS
+SELECT
+    s.student_name,
+    c.course_name
+FROM student_courses sc
+JOIN student s
+    ON sc.student_id = s.student_id
+JOIN courses c
+    ON sc.course_id = c.course_id;
+
+SELECT * FROM student_course_view;
+
+
+-- Stored Procedures — Saved SQL Operations
+-- A stored procedure is a named block of SQL code that you can execute when you want to perform a task. It can accept parameters and contain multiple SQL statements, conditions, and loops.
+
+-- For example, suppose you frequently want to find a student's enrolled courses using their student ID.
+
+-- In PostgreSQL, you can create a procedure like this:
+
+-- Why use Stored Procedures?
+
+-- - Reuse database operations.
+-- - Perform multiple operations in one call.
+-- - Apply business rules and validation.
+-- - Manage transactions and automate repetitive database tasks.
+
+CREATE PROCEDURE add_student(
+    p_id INT,
+    p_name VARCHAR(100)
+)
+LANGUAGE SQL
+AS $$
+    INSERT INTO students (student_id, student_name)
+    VALUES (p_id, p_name);
+$$;
+
+CALL add_student(10, 'Anuj');
