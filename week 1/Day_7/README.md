@@ -14,9 +14,11 @@ The examples are in [`profile.sql`](./profile.sql) and use PostgreSQL syntax.
 4. [Searched CASE expression](#searched-case-expression)
 5. [CASE in ORDER BY](#case-in-order-by)
 6. [Subqueries](#subqueries)
-7. [Expected outputs](#expected-outputs)
-8. [Simple versus searched CASE](#simple-versus-searched-case)
-9. [Practice questions](#practice-questions)
+7. [CTEs and the WITH clause](#ctes-and-the-with-clause)
+8. [Expected outputs](#expected-outputs)
+9. [Simple versus searched CASE](#simple-versus-searched-case)
+10. [Final revision checklist](#final-revision-checklist)
+11. [Practice questions](#practice-questions)
 
 ## How to run the file
 
@@ -469,6 +471,233 @@ Subqueries can appear in several parts of a statement:
 Prefer a join when it expresses the relationship more clearly, and use
 `EXISTS` when you only need to know whether a matching row is present.
 
+## CTEs and the `WITH` clause
+
+**CTE** means **Common Table Expression**. A CTE is a named temporary result
+that is available only while one SQL statement is running. CTEs begin with
+the `WITH` clause:
+
+```sql
+WITH cte_name AS (
+    SELECT ...
+)
+SELECT ...
+FROM cte_name;
+```
+
+Think of a CTE as giving a long inner query a readable name. It does not
+create a permanent table, and it does not permanently save data.
+
+### 1. The simplest CTE
+
+This CTE creates a temporary result containing high-scoring profiles:
+
+```sql
+WITH high_score_profiles AS (
+    SELECT
+        profile_id,
+        full_name,
+        score
+    FROM profiles
+    WHERE score >= 80
+)
+SELECT *
+FROM high_score_profiles
+ORDER BY score DESC;
+```
+
+The main query reads `high_score_profiles` like a table:
+
+| ID | Name | Score |
+| ---: | --- | ---: |
+| 1 | Anuj Biswas | 92 |
+| 3 | Rohan Gupta | 81 |
+
+The CTE disappears after this statement finishes.
+
+### 2. CTE with an alias
+
+Give a CTE a short alias just as you would give a normal table:
+
+```sql
+WITH active_profiles AS (
+    SELECT profile_id, full_name, city, score
+    FROM profiles
+    WHERE account_status = 'active'
+)
+SELECT
+    ap.full_name,
+    ap.city,
+    ap.score
+FROM active_profiles AS ap
+ORDER BY ap.score DESC;
+```
+
+This returns the three active profiles, sorted by score.
+
+### 3. CTE with `GROUP BY`
+
+Use a CTE to calculate a summary first, then filter the summary in the main
+query:
+
+```sql
+WITH status_summary AS (
+    SELECT
+        account_status,
+        COUNT(*) AS profile_count,
+        ROUND(AVG(score), 2) AS average_score
+    FROM profiles
+    GROUP BY account_status
+)
+SELECT
+    account_status,
+    profile_count,
+    average_score
+FROM status_summary
+WHERE average_score >= 60
+ORDER BY average_score DESC;
+```
+
+Expected output:
+
+| Status | Count | Average score |
+| --- | ---: | ---: |
+| active | 3 | 70.67 |
+| inactive | 1 | 68.00 |
+
+This is often clearer than putting a grouped subquery directly inside
+`FROM`.
+
+### 4. Multiple CTEs
+
+You can define multiple CTEs in one `WITH` clause. Separate them with commas:
+
+```sql
+WITH scored_profiles AS (
+    SELECT
+        profile_id,
+        full_name,
+        score,
+        CASE
+            WHEN score >= 80 THEN 'Excellent'
+            WHEN score >= 60 THEN 'Good'
+            WHEN score >= 40 THEN 'Needs improvement'
+            ELSE 'Poor'
+        END AS performance
+    FROM profiles
+),
+excellent_profiles AS (
+    SELECT *
+    FROM scored_profiles
+    WHERE performance = 'Excellent'
+)
+SELECT
+    full_name,
+    score,
+    performance
+FROM excellent_profiles
+ORDER BY score DESC;
+```
+
+The second CTE uses the first CTE. Expected output:
+
+| Name | Score | Performance |
+| --- | ---: | --- |
+| Anuj Biswas | 92 | Excellent |
+| Rohan Gupta | 81 | Excellent |
+
+### 5. CTE compared with a subquery
+
+Both queries below find profiles above the overall average. The CTE version
+names the average, which makes a longer query easier to read:
+
+```sql
+WITH overall_score AS (
+    SELECT AVG(score) AS average_score
+    FROM profiles
+)
+SELECT p.full_name, p.score
+FROM profiles AS p
+CROSS JOIN overall_score AS os
+WHERE p.score > os.average_score
+ORDER BY p.score DESC;
+```
+
+Use a CTE when the intermediate result deserves a name or when a query has
+multiple logical steps. Use a normal subquery when the expression is short
+and only used once.
+
+### 6. CTE with `UPDATE`
+
+CTEs can also prepare rows for `UPDATE`, `INSERT`, or `DELETE`. The following
+example is intentionally not executed in `profile.sql` because it changes
+data:
+
+```sql
+WITH low_scores AS (
+    SELECT profile_id
+    FROM profiles
+    WHERE score < 40
+)
+UPDATE profiles
+SET account_status = 'pending'
+WHERE profile_id IN (
+    SELECT profile_id
+    FROM low_scores
+);
+```
+
+This would change Meera Shah's status to `pending`. Always run a `SELECT`
+first to verify the rows before running a data-changing statement.
+
+### 7. Recursive CTE
+
+A recursive CTE refers to itself. It has two parts:
+
+1. an **anchor query**, which supplies the first row; and
+2. a **recursive query**, which creates the next rows.
+
+This example generates numbers 1 through 5:
+
+```sql
+WITH RECURSIVE numbers AS (
+    SELECT 1 AS number
+    UNION ALL
+    SELECT number + 1
+    FROM numbers
+    WHERE number < 5
+)
+SELECT number
+FROM numbers
+ORDER BY number;
+```
+
+Output:
+
+```text
+ number
+--------
+      1
+      2
+      3
+      4
+      5
+```
+
+The condition `WHERE number < 5` is the stopping condition. Without a
+stopping condition, a recursive CTE can continue indefinitely.
+
+### CTE rules to remember
+
+- `WITH` comes before the main `SELECT`, `INSERT`, `UPDATE`, or `DELETE`.
+- A CTE has a name and a query inside parentheses.
+- Multiple CTEs are separated with commas, not repeated `WITH` keywords.
+- The final query must use the CTE, otherwise it has no useful effect.
+- A CTE is temporary for one statement; it is not a permanent table.
+- Every CTE used in `FROM` needs an alias when the database syntax requires it.
+- `WITH RECURSIVE` is required when a CTE refers to itself.
+- Put the recursive stopping condition inside the recursive part.
+
 ## Expected outputs
 
 When the complete file runs successfully, these checkpoints should match:
@@ -483,6 +712,9 @@ When the complete file runs successfully, these checkpoints should match:
 | Overall average score | 67.00 |
 | Profiles above overall average | 3 |
 | Highest profile per status | 3 |
+| Active profiles | 3 |
+| Profiles with score 80 or higher | 2 |
+| CTE numbers generated | 1, 2, 3, 4, 5 |
 
 Terminal spacing may differ, but the values and row order should match.
 
@@ -500,6 +732,46 @@ Terminal spacing may differ, but the values and row order should match.
 - Use **simple `CASE`** when one column is being matched against known values.
 - Use **searched `CASE`** when you need operators such as `>`, `<`, `BETWEEN`,
   `IN`, or multiple columns.
+
+## Final revision checklist
+
+### Basic SQL
+
+- `SELECT` chooses columns.
+- `FROM` chooses the table.
+- `WHERE` filters rows before grouping.
+- `ORDER BY` sorts the result.
+- `DISTINCT` removes duplicate result values.
+
+### Aggregation
+
+- `COUNT`, `SUM`, `AVG`, `MIN`, and `MAX` calculate summaries.
+- `GROUP BY` creates one result group per distinct grouping value.
+- `HAVING` filters groups after aggregation.
+
+### `CASE`
+
+- Simple `CASE` compares one expression with exact values.
+- Searched `CASE` checks conditions from top to bottom.
+- The first true `WHEN` wins.
+- `ELSE` handles values that match no `WHEN`.
+
+### Subqueries
+
+- A scalar subquery returns one value.
+- `IN` checks whether a value is in a list.
+- `ANY` needs one true comparison.
+- `ALL` needs every comparison to be true.
+- A correlated subquery can use a value from the outer query.
+- `EXISTS` checks whether a matching row exists.
+- `NOT EXISTS` checks that no matching row exists.
+
+### CTEs
+
+- `WITH name AS (...)` gives a temporary query result a name.
+- CTEs make multi-step SQL easier to read.
+- Multiple CTEs can build on one another.
+- A recursive CTE can produce repeated or hierarchical results.
 
 ## Practice questions
 
@@ -519,3 +791,7 @@ Terminal spacing may differ, but the values and row order should match.
 8. Rewrite the correlated average-score query using a join and `GROUP BY`.
 9. Use `IN` to find profiles whose city belongs to a city containing a
    profile younger than 25.
+10. Write a CTE that returns profiles with scores below the overall average.
+11. Write two CTEs: one for active profiles and one for inactive profiles,
+    then combine them with `UNION ALL`.
+12. Write a recursive CTE that generates numbers from 1 to 10.

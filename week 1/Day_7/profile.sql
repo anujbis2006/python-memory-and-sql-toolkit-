@@ -223,3 +223,122 @@ FROM (
 ) AS status_summary
 WHERE status_summary.average_score >= 60
 ORDER BY status_summary.average_score DESC;
+
+-- COMMON TABLE EXPRESSIONS (CTEs) WITH THE WITH CLAUSE
+-- A CTE gives a temporary result a name so that the main query is easier to
+-- read. The CTE exists only for this one SQL statement.
+
+-- BASIC CTE
+-- First create high_score_profiles, then query it like a temporary table.
+WITH high_score_profiles AS (
+    SELECT
+        profile_id,
+        full_name,
+        score
+    FROM profiles
+    WHERE score >= 80
+)
+SELECT *
+FROM high_score_profiles
+ORDER BY score DESC;
+
+-- CTE WITH AN ALIAS
+-- The CTE name can be given a short alias in the main query.
+WITH active_profiles AS (
+    SELECT profile_id, full_name, city, score
+    FROM profiles
+    WHERE account_status = 'active'
+)
+SELECT
+    ap.full_name,
+    ap.city,
+    ap.score
+FROM active_profiles AS ap
+ORDER BY ap.score DESC;
+
+-- CTE WITH AGGREGATION
+-- Build one summary first, then filter the summary outside the CTE.
+WITH status_summary AS (
+    SELECT
+        account_status,
+        COUNT(*) AS profile_count,
+        ROUND(AVG(score), 2) AS average_score
+    FROM profiles
+    GROUP BY account_status
+)
+SELECT
+    account_status,
+    profile_count,
+    average_score
+FROM status_summary
+WHERE average_score >= 60
+ORDER BY average_score DESC;
+
+-- MULTIPLE CTEs
+-- Separate steps can be named and then used by a later CTE or the final query.
+WITH scored_profiles AS (
+    SELECT
+        profile_id,
+        full_name,
+        account_status,
+        score,
+        CASE
+            WHEN score >= 80 THEN 'Excellent'
+            WHEN score >= 60 THEN 'Good'
+            WHEN score >= 40 THEN 'Needs improvement'
+            ELSE 'Poor'
+        END AS performance
+    FROM profiles
+),
+excellent_profiles AS (
+    SELECT *
+    FROM scored_profiles
+    WHERE performance = 'Excellent'
+)
+SELECT
+    full_name,
+    score,
+    performance
+FROM excellent_profiles
+ORDER BY score DESC;
+
+-- CTE COMPARED WITH A SUBQUERY
+-- The following CTE is easier to read than placing the average query inside
+-- the WHERE clause, but both produce the same result.
+WITH overall_score AS (
+    SELECT AVG(score) AS average_score
+    FROM profiles
+)
+SELECT
+    p.full_name,
+    p.score
+FROM profiles AS p
+CROSS JOIN overall_score AS os
+WHERE p.score > os.average_score
+ORDER BY p.score DESC;
+
+-- CTE FOR UPDATE
+-- PostgreSQL also allows a CTE to provide rows for an UPDATE. This example
+-- is intentionally commented out so the revision script does not change data.
+-- WITH low_scores AS (
+--     SELECT profile_id
+--     FROM profiles
+--     WHERE score < 40
+-- )
+-- UPDATE profiles
+-- SET account_status = 'pending'
+-- WHERE profile_id IN (SELECT profile_id FROM low_scores);
+
+-- RECURSIVE CTE
+-- A recursive CTE can repeatedly refer to itself. This small example
+-- generates the numbers 1 through 5 without needing a numbers table.
+WITH RECURSIVE numbers AS (
+    SELECT 1 AS number
+    UNION ALL
+    SELECT number + 1
+    FROM numbers
+    WHERE number < 5
+)
+SELECT number
+FROM numbers
+ORDER BY number;
