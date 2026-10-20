@@ -772,6 +772,46 @@ function_name(value) OVER (
 - `PARTITION BY` divides rows into independent groups. It is optional.
 - `ORDER BY` defines the order used by the calculation.
 
+### How a window function thinks
+
+Imagine the rows sorted by score:
+
+| Row | Name | Score |
+| ---: | --- | ---: |
+| 1 | Anuj Biswas | 92 |
+| 2 | Rohan Gupta | 81 |
+| 3 | Akash Yas | 68 |
+| 4 | Simran Kaur | 55 |
+| 5 | Meera Shah | 39 |
+
+For `ROW_NUMBER() OVER (ORDER BY score DESC)`, the window is all five rows,
+the order is highest score first, and the function assigns 1 through 5. The
+rows are not deleted or grouped together; a new calculated column is added.
+
+If the query uses:
+
+```sql
+PARTITION BY account_status
+```
+
+the rows are split into separate windows: one window for `active`, one for
+`inactive`, and one for `pending`. A ranking or average starts again inside
+each window.
+
+### Window-function processing order
+
+A simplified SQL processing order is:
+
+1. `FROM` and `JOIN` choose the source rows.
+2. `WHERE` removes rows.
+3. `GROUP BY` and aggregates create grouped results.
+4. `HAVING` removes groups.
+5. Window functions calculate over the remaining result rows.
+6. The final `ORDER BY` sorts what is displayed.
+
+This is why a window-function alias usually cannot be used directly in the
+same query's `WHERE` clause. Use a CTE or subquery first, then filter it.
+
 ### 1. `ROW_NUMBER`
 
 `ROW_NUMBER()` gives every row a unique sequential number:
@@ -820,6 +860,14 @@ ORDER BY score DESC;
 With the current unique scores, both rankings are 1 through 5. If two
 profiles share second place, `RANK()` gives `1, 2, 2, 4`, while
 `DENSE_RANK()` gives `1, 2, 2, 3`.
+
+Use this quick comparison:
+
+| Function | Tied rows | Example with scores `100, 90, 90, 80` |
+| --- | --- | --- |
+| `ROW_NUMBER()` | Different numbers | `1, 2, 3, 4` |
+| `RANK()` | Same rank, then gap | `1, 2, 2, 4` |
+| `DENSE_RANK()` | Same rank, no gap | `1, 2, 2, 3` |
 
 ### 3. `PARTITION BY`
 
@@ -912,6 +960,36 @@ ORDER BY score DESC;
 `UNBOUNDED PRECEDING` means “start at the first row” and `CURRENT ROW` means
 “include this row”. The first running total is 92 and the final total is 335.
 
+Common window-frame phrases:
+
+| Frame | Meaning |
+| --- | --- |
+| `UNBOUNDED PRECEDING` | Start at the first row |
+| `N PRECEDING` | Start N rows before the current row |
+| `CURRENT ROW` | Include the current row |
+| `N FOLLOWING` | Include up to N rows after the current row |
+| `UNBOUNDED FOLLOWING` | Continue through the final row |
+
+For example, a three-row moving average can be written as:
+
+```sql
+SELECT
+    full_name,
+    score,
+    ROUND(
+        AVG(score) OVER (
+            ORDER BY score DESC
+            ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING
+        ),
+        2
+    ) AS moving_average
+FROM profiles
+ORDER BY score DESC;
+```
+
+The first row uses itself and the next row because there is no previous row.
+Middle rows use the previous, current, and next rows.
+
 ### 7. `LAG` and `LEAD`
 
 - `LAG` reads a value from a previous row.
@@ -928,6 +1006,20 @@ ORDER BY score DESC;
 ```
 
 For the first row, `LAG` is `NULL`. For the last row, `LEAD` is `NULL`.
+
+You can provide a default value when a previous or next row does not exist:
+
+```sql
+SELECT
+    full_name,
+    score,
+    LAG(score, 1, 0) OVER (ORDER BY score DESC) AS previous_score,
+    LEAD(score, 1, 0) OVER (ORDER BY score DESC) AS next_score
+FROM profiles
+ORDER BY score DESC;
+```
+
+Here, the missing value at either end is shown as `0` instead of `NULL`.
 
 ### 8. Filter a window result with a CTE
 
@@ -973,6 +1065,10 @@ This returns the highest-scoring profile in each status group:
 - `DENSE_RANK` does not leave gaps after ties.
 - `LAG` looks backward; `LEAD` looks forward.
 - Use a CTE or subquery when filtering by a calculated window value.
+- A window function adds information to rows; it does not reduce the number
+  of rows.
+- Use a deterministic tie-breaker such as `profile_id` when equal values are
+  possible.
 
 ## Expected outputs
 
