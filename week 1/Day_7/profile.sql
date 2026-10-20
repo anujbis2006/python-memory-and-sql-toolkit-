@@ -461,3 +461,29 @@ SELECT
 FROM ranked_profiles
 WHERE status_position = 1
 ORDER BY account_status;
+
+-- MOVING AVERAGE
+-- The frame includes the previous row, current row, and next row.
+-- At the first and last rows, only available rows are used.
+SELECT
+    full_name,
+    score,
+    ROUND(
+        AVG(score) OVER (
+            ORDER BY score DESC
+            ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING
+        ),
+        2
+    ) AS moving_average
+FROM profiles
+ORDER BY score DESC;
+
+-- LAG AND LEAD WITH DEFAULT VALUES
+-- If there is no previous or next row, return 0 instead of NULL.
+SELECT
+    full_name,
+    score,
+    LAG(score, 1, 0) OVER (ORDER BY score DESC) AS previous_score,
+    LEAD(score, 1, 0) OVER (ORDER BY score DESC) AS next_score
+FROM profiles
+ORDER BY score DESC;
