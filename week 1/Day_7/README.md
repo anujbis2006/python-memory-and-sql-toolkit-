@@ -15,10 +15,11 @@ The examples are in [`profile.sql`](./profile.sql) and use PostgreSQL syntax.
 5. [CASE in ORDER BY](#case-in-order-by)
 6. [Subqueries](#subqueries)
 7. [CTEs and the WITH clause](#ctes-and-the-with-clause)
-8. [Expected outputs](#expected-outputs)
-9. [Simple versus searched CASE](#simple-versus-searched-case)
-10. [Final revision checklist](#final-revision-checklist)
-11. [Practice questions](#practice-questions)
+8. [Window functions](#window-functions)
+9. [Expected outputs](#expected-outputs)
+10. [Simple versus searched CASE](#simple-versus-searched-case)
+11. [Final revision checklist](#final-revision-checklist)
+12. [Practice questions](#practice-questions)
 
 ## How to run the file
 
@@ -698,6 +699,281 @@ stopping condition, a recursive CTE can continue indefinitely.
 - `WITH RECURSIVE` is required when a CTE refers to itself.
 - Put the recursive stopping condition inside the recursive part.
 
+### Your original branch-average CTE query
+
+Your original practice query has been kept in `profile.sql` and the new
+window-function examples have been written **after it**. The query is:
+
+```sql
+with cte_avgmarks as
+(
+    select branch , avg(markobtained) as 'avg marks '
+    from allstudents
+    group by branch
+)
+select studeint_id , firstname,lastname,a.branch,marksobtained,
+from allstudent a
+inner join cte_avgmarks c
+on a.branch = c.branch
+and a.marksobtained > c.[avg.marks]
+```
+
+This query is intended to find students whose marks are above the average
+marks for their branch. It uses a CTE to calculate one average per branch,
+then joins that result back to the student rows.
+
+The query is preserved as written, but it references the separate
+`allstudents`/`allstudent` schema and contains spelling/syntax differences
+such as `studeint_id`, a trailing comma, and `[avg.marks]`. Therefore, it is
+kept as revision material and is not part of the runnable `profiles` examples.
+The corrected pattern for a PostgreSQL schema would look like this:
+
+```sql
+WITH cte_avgmarks AS (
+    SELECT
+        branch,
+        AVG(marks_obtained) AS average_marks
+    FROM allstudents
+    GROUP BY branch
+)
+SELECT
+    s.student_id,
+    s.firstname,
+    s.lastname,
+    s.branch,
+    s.marks_obtained
+FROM allstudents AS s
+JOIN cte_avgmarks AS c
+    ON c.branch = s.branch
+WHERE s.marks_obtained > c.average_marks;
+```
+
+## Window functions
+
+A **window function** calculates across related rows while keeping each
+original row visible. This is the key difference from `GROUP BY`:
+
+| `GROUP BY` | Window function |
+| --- | --- |
+| Combines rows into one row per group | Keeps one output row for each input row |
+| Useful for summaries | Useful for rankings, comparisons, and running calculations |
+| Uses `GROUP BY` | Uses `OVER (...)` |
+
+General syntax:
+
+```sql
+function_name(value) OVER (
+    PARTITION BY group_column
+    ORDER BY sort_column
+)
+```
+
+- `OVER` turns a normal aggregate or ranking function into a window function.
+- `PARTITION BY` divides rows into independent groups. It is optional.
+- `ORDER BY` defines the order used by the calculation.
+
+### 1. `ROW_NUMBER`
+
+`ROW_NUMBER()` gives every row a unique sequential number:
+
+```sql
+SELECT
+    full_name,
+    score,
+    ROW_NUMBER() OVER (ORDER BY score DESC) AS score_position
+FROM profiles
+ORDER BY score_position;
+```
+
+Expected positions:
+
+| Position | Name | Score |
+| ---: | --- | ---: |
+| 1 | Anuj Biswas | 92 |
+| 2 | Rohan Gupta | 81 |
+| 3 | Akash Yas | 68 |
+| 4 | Simran Kaur | 55 |
+| 5 | Meera Shah | 39 |
+
+Even if two scores are equal, `ROW_NUMBER()` gives different positions. Add
+`profile_id` as a second sort column when ties must be deterministic:
+
+```sql
+ROW_NUMBER() OVER (ORDER BY score DESC, profile_id)
+```
+
+### 2. `RANK` and `DENSE_RANK`
+
+`RANK()` gives tied rows the same rank and leaves gaps. `DENSE_RANK()` also
+gives tied rows the same rank but does not leave gaps:
+
+```sql
+SELECT
+    full_name,
+    score,
+    RANK() OVER (ORDER BY score DESC) AS score_rank,
+    DENSE_RANK() OVER (ORDER BY score DESC) AS dense_score_rank
+FROM profiles
+ORDER BY score DESC;
+```
+
+With the current unique scores, both rankings are 1 through 5. If two
+profiles share second place, `RANK()` gives `1, 2, 2, 4`, while
+`DENSE_RANK()` gives `1, 2, 2, 3`.
+
+### 3. `PARTITION BY`
+
+`PARTITION BY` restarts the calculation for each group:
+
+```sql
+SELECT
+    full_name,
+    account_status,
+    score,
+    ROW_NUMBER() OVER (
+        PARTITION BY account_status
+        ORDER BY score DESC
+    ) AS status_position
+FROM profiles
+ORDER BY account_status, status_position;
+```
+
+Active profiles are ranked separately as 1, 2, and 3. Inactive and pending
+groups each have position 1.
+
+### 4. Windowed `AVG`
+
+This shows every profile and the average score for its status:
+
+```sql
+SELECT
+    full_name,
+    account_status,
+    score,
+    ROUND(
+        AVG(score) OVER (PARTITION BY account_status),
+        2
+    ) AS status_average
+FROM profiles
+ORDER BY account_status, score DESC;
+```
+
+Expected averages:
+
+| Status | Average shown for each row |
+| --- | ---: |
+| active | 70.67 |
+| inactive | 68.00 |
+| pending | 55.00 |
+
+Unlike `GROUP BY`, this returns all five profile rows.
+
+### 5. Compare a row with its group average
+
+```sql
+SELECT
+    full_name,
+    account_status,
+    score,
+    ROUND(
+        score - AVG(score) OVER (PARTITION BY account_status),
+        2
+    ) AS difference_from_status_average
+FROM profiles
+ORDER BY account_status, score DESC;
+```
+
+Anuj Biswas is `21.33` points above the active average, while Meera Shah is
+`-31.67` points below it.
+
+### 6. Running total and running average
+
+Use an ordered window frame for cumulative calculations:
+
+```sql
+SELECT
+    full_name,
+    score,
+    SUM(score) OVER (
+        ORDER BY score DESC
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS running_total,
+    ROUND(
+        AVG(score) OVER (
+            ORDER BY score DESC
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ),
+        2
+    ) AS running_average
+FROM profiles
+ORDER BY score DESC;
+```
+
+`UNBOUNDED PRECEDING` means “start at the first row” and `CURRENT ROW` means
+“include this row”. The first running total is 92 and the final total is 335.
+
+### 7. `LAG` and `LEAD`
+
+- `LAG` reads a value from a previous row.
+- `LEAD` reads a value from a following row.
+
+```sql
+SELECT
+    full_name,
+    score,
+    LAG(score) OVER (ORDER BY score DESC) AS previous_score,
+    LEAD(score) OVER (ORDER BY score DESC) AS next_score
+FROM profiles
+ORDER BY score DESC;
+```
+
+For the first row, `LAG` is `NULL`. For the last row, `LEAD` is `NULL`.
+
+### 8. Filter a window result with a CTE
+
+Window functions are calculated after `WHERE`, so calculate the window value
+in a CTE and filter it outside:
+
+```sql
+WITH ranked_profiles AS (
+    SELECT
+        full_name,
+        account_status,
+        score,
+        ROW_NUMBER() OVER (
+            PARTITION BY account_status
+            ORDER BY score DESC
+        ) AS status_position
+    FROM profiles
+)
+SELECT
+    full_name,
+    account_status,
+    score
+FROM ranked_profiles
+WHERE status_position = 1
+ORDER BY account_status;
+```
+
+This returns the highest-scoring profile in each status group:
+
+| Name | Status | Score |
+| --- | --- | ---: |
+| Anuj Biswas | active | 92 |
+| Akash Yas | inactive | 68 |
+| Simran Kaur | pending | 55 |
+
+### Window-function revision rules
+
+- Use `OVER (...)` with a window function.
+- Use `PARTITION BY` for separate calculations per group.
+- Use `ORDER BY` for ranking, previous/next rows, and running totals.
+- `ROW_NUMBER` always creates unique positions.
+- `RANK` leaves gaps after ties.
+- `DENSE_RANK` does not leave gaps after ties.
+- `LAG` looks backward; `LEAD` looks forward.
+- Use a CTE or subquery when filtering by a calculated window value.
+
 ## Expected outputs
 
 When the complete file runs successfully, these checkpoints should match:
@@ -715,6 +991,8 @@ When the complete file runs successfully, these checkpoints should match:
 | Active profiles | 3 |
 | Profiles with score 80 or higher | 2 |
 | CTE numbers generated | 1, 2, 3, 4, 5 |
+| Total of all profile scores | 335 |
+| Highest score in each status | Anuj Biswas, Akash Yas, Simran Kaur |
 
 Terminal spacing may differ, but the values and row order should match.
 
@@ -773,6 +1051,13 @@ Terminal spacing may differ, but the values and row order should match.
 - Multiple CTEs can build on one another.
 - A recursive CTE can produce repeated or hierarchical results.
 
+### Window functions
+
+- Window functions keep detail rows while calculating across related rows.
+- `PARTITION BY` creates independent windows.
+- Ranking functions assign positions without merging rows.
+- Window frames control which ordered rows are included in cumulative results.
+
 ## Practice questions
 
 1. Add a `country` column and label Indian profiles as `Domestic` and all
@@ -795,3 +1080,8 @@ Terminal spacing may differ, but the values and row order should match.
 11. Write two CTEs: one for active profiles and one for inactive profiles,
     then combine them with `UNION ALL`.
 12. Write a recursive CTE that generates numbers from 1 to 10.
+13. Add a duplicate score and compare `ROW_NUMBER`, `RANK`, and `DENSE_RANK`.
+14. Find the second-highest score in each account-status group using a window
+    function and a CTE.
+15. Use `LAG` to show the score difference between each profile and the
+    previous profile in descending score order.

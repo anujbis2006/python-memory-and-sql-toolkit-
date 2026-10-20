@@ -342,3 +342,122 @@ WITH RECURSIVE numbers AS (
 SELECT number
 FROM numbers
 ORDER BY number;
+
+-- Original CTE practice query (kept exactly as written).
+with cte_avgmarks as 
+(
+    select branch , avg(markobtained) as 'avg marks '
+    from allstudents
+    group by branch
+)
+select studeint_id , firstname,lastname,a.branch,marksobtained,
+from allstudent a
+inner join cte_avgmarks c
+on a.branch = c.branch
+and a.marksobtained > c.[avg.marks]
+
+-- WINDOW FUNCTIONS
+-- A window function calculates across related rows while keeping each
+-- original row in the result. Unlike GROUP BY, it does not merge rows.
+
+-- Basic ROW_NUMBER: give every profile a unique position by score.
+SELECT
+    full_name,
+    score,
+    ROW_NUMBER() OVER (ORDER BY score DESC) AS score_position
+FROM profiles
+ORDER BY score_position;
+
+-- RANK leaves gaps when two rows have the same value.
+-- DENSE_RANK does not leave gaps after a tie.
+SELECT
+    full_name,
+    score,
+    RANK() OVER (ORDER BY score DESC) AS score_rank,
+    DENSE_RANK() OVER (ORDER BY score DESC) AS dense_score_rank
+FROM profiles
+ORDER BY score DESC;
+
+-- PARTITION BY restarts the calculation for each account status.
+SELECT
+    full_name,
+    account_status,
+    score,
+    ROW_NUMBER() OVER (
+        PARTITION BY account_status
+        ORDER BY score DESC
+    ) AS status_position
+FROM profiles
+ORDER BY account_status, status_position;
+
+-- A windowed aggregate shows the status average without removing rows.
+SELECT
+    full_name,
+    account_status,
+    score,
+    ROUND(
+        AVG(score) OVER (PARTITION BY account_status),
+        2
+    ) AS status_average
+FROM profiles
+ORDER BY account_status, score DESC;
+
+-- Compare every score with its status average.
+SELECT
+    full_name,
+    account_status,
+    score,
+    ROUND(
+        score - AVG(score) OVER (PARTITION BY account_status),
+        2
+    ) AS difference_from_status_average
+FROM profiles
+ORDER BY account_status, score DESC;
+
+-- Running total and running average ordered by score.
+SELECT
+    full_name,
+    score,
+    SUM(score) OVER (
+        ORDER BY score DESC
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS running_total,
+    ROUND(
+        AVG(score) OVER (
+            ORDER BY score DESC
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ),
+        2
+    ) AS running_average
+FROM profiles
+ORDER BY score DESC;
+
+-- LAG reads the previous row and LEAD reads the next row.
+SELECT
+    full_name,
+    score,
+    LAG(score) OVER (ORDER BY score DESC) AS previous_score,
+    LEAD(score) OVER (ORDER BY score DESC) AS next_score
+FROM profiles
+ORDER BY score DESC;
+
+-- Find the highest-scoring profile in every status.
+-- Calculate the window result in a CTE before filtering it.
+WITH ranked_profiles AS (
+    SELECT
+        full_name,
+        account_status,
+        score,
+        ROW_NUMBER() OVER (
+            PARTITION BY account_status
+            ORDER BY score DESC
+        ) AS status_position
+    FROM profiles
+)
+SELECT
+    full_name,
+    account_status,
+    score
+FROM ranked_profiles
+WHERE status_position = 1
+ORDER BY account_status;
