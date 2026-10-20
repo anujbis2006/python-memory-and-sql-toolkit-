@@ -359,6 +359,18 @@ and a.marksobtained > c.[avg.marks]
 -- WINDOW FUNCTIONS
 -- A window function calculates across related rows while keeping each
 -- original row in the result. Unlike GROUP BY, it does not merge rows.
+--
+-- Main types:
+-- 1. Ranking: ROW_NUMBER, RANK, DENSE_RANK, and NTILE assign positions or
+--    buckets.
+-- 2. Aggregate: SUM, AVG, COUNT, MIN, and MAX summarize the window while
+--    keeping every row.
+-- 3. Navigation/value: LAG, LEAD, FIRST_VALUE, LAST_VALUE, and NTH_VALUE
+--    read values from another row or position in the window.
+-- 4. Distribution: PERCENT_RANK and CUME_DIST show relative position.
+--
+-- PARTITION BY and the window frame are not types. They control which rows
+-- each function can see and how the calculation is performed.
 
 -- Basic ROW_NUMBER: give every profile a unique position by score.
 SELECT
@@ -375,6 +387,14 @@ SELECT
     score,
     RANK() OVER (ORDER BY score DESC) AS score_rank,
     DENSE_RANK() OVER (ORDER BY score DESC) AS dense_score_rank
+FROM profiles
+ORDER BY score DESC;
+
+-- NTILE divides ordered rows into numbered buckets.
+SELECT
+    full_name,
+    score,
+    NTILE(4) OVER (ORDER BY score DESC) AS score_quartile
 FROM profiles
 ORDER BY score DESC;
 
@@ -432,6 +452,42 @@ SELECT
 FROM profiles
 ORDER BY score DESC;
 
+-- A window frame chooses the rows used for the current calculation.
+-- General form:
+-- function_name(value) OVER (
+--     ORDER BY sort_column
+--     ROWS BETWEEN frame_start AND frame_end
+-- )
+--
+-- Frame boundaries:
+-- UNBOUNDED PRECEDING = start at the first row in the ordered window.
+-- N PRECEDING          = include up to N rows before the current row.
+-- CURRENT ROW          = the row currently being calculated.
+-- N FOLLOWING          = include up to N rows after the current row.
+-- UNBOUNDED FOLLOWING  = end at the last row in the ordered window.
+--
+-- The full frame includes every row for every calculation.
+SELECT
+    full_name,
+    score,
+    LAST_VALUE(score) OVER (
+        ORDER BY score DESC
+        ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+    ) AS lowest_score
+FROM profiles
+ORDER BY score DESC;
+
+-- The current row and the next two rows.
+SELECT
+    full_name,
+    score,
+    SUM(score) OVER (
+        ORDER BY score DESC
+        ROWS BETWEEN CURRENT ROW AND 2 FOLLOWING
+    ) AS current_and_next_two_total
+FROM profiles
+ORDER BY score DESC;
+
 -- LAG reads the previous row and LEAD reads the next row.
 SELECT
     full_name,
@@ -485,5 +541,32 @@ SELECT
     score,
     LAG(score, 1, 0) OVER (ORDER BY score DESC) AS previous_score,
     LEAD(score, 1, 0) OVER (ORDER BY score DESC) AS next_score
+FROM profiles
+ORDER BY score DESC;
+
+-- FIRST_VALUE and LAST_VALUE read values from positions in the window.
+-- The explicit frame lets LAST_VALUE see the final row, not only the
+-- current row.
+SELECT
+    full_name,
+    score,
+    FIRST_VALUE(score) OVER (
+        ORDER BY score DESC
+    ) AS highest_score,
+    LAST_VALUE(score) OVER (
+        ORDER BY score DESC
+        ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+    ) AS lowest_score
+FROM profiles
+ORDER BY score DESC;
+
+-- Distribution functions show relative and cumulative position.
+SELECT
+    full_name,
+    score,
+    ROUND(PERCENT_RANK() OVER (ORDER BY score DESC)::numeric, 2)
+        AS percent_rank,
+    ROUND(CUME_DIST() OVER (ORDER BY score DESC)::numeric, 2)
+        AS cumulative_distribution
 FROM profiles
 ORDER BY score DESC;

@@ -812,6 +812,41 @@ A simplified SQL processing order is:
 This is why a window-function alias usually cannot be used directly in the
 same query's `WHERE` clause. Use a CTE or subquery first, then filter it.
 
+### Types of window functions
+
+Window functions are commonly grouped by the kind of question they answer.
+The function still keeps every input row; the category only describes what
+the function calculates.
+
+| Type | Purpose | Common functions |
+| --- | --- | --- |
+| **Ranking** | Assign a position to each row | `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `NTILE` |
+| **Aggregate** | Calculate a summary over the window | `SUM`, `AVG`, `COUNT`, `MIN`, `MAX` |
+| **Navigation/value** | Read a value from another row or from the window | `LAG`, `LEAD`, `FIRST_VALUE`, `LAST_VALUE`, `NTH_VALUE` |
+| **Distribution** | Show a row's relative position or cumulative distribution | `PERCENT_RANK`, `CUME_DIST` |
+
+For example, these expressions use the same ordering but answer different
+questions:
+
+```sql
+SELECT
+    full_name,
+    score,
+    RANK() OVER (ORDER BY score DESC) AS score_rank,
+    AVG(score) OVER () AS overall_average,
+    LAG(score) OVER (ORDER BY score DESC) AS previous_score,
+    PERCENT_RANK() OVER (ORDER BY score DESC) AS relative_position
+FROM profiles
+ORDER BY score DESC;
+```
+
+`RANK` answers “what position is this row?”, `AVG` answers “what is the
+average across the window?”, `LAG` answers “what was the previous row's
+value?”, and `PERCENT_RANK` answers “how far through the ordered distribution
+is this row?”. These are categories, not replacements for `PARTITION BY` or
+the window frame; any of the functions can also use those clauses where
+appropriate.
+
 ### 1. `ROW_NUMBER`
 
 `ROW_NUMBER()` gives every row a unique sequential number:
@@ -868,6 +903,19 @@ Use this quick comparison:
 | `ROW_NUMBER()` | Different numbers | `1, 2, 3, 4` |
 | `RANK()` | Same rank, then gap | `1, 2, 2, 4` |
 | `DENSE_RANK()` | Same rank, no gap | `1, 2, 2, 3` |
+
+`NTILE(n)` is another ranking-style function. It divides the ordered rows
+into up to `n` numbered buckets, which is useful for quartiles or
+percentiles:
+
+```sql
+SELECT
+    full_name,
+    score,
+    NTILE(4) OVER (ORDER BY score DESC) AS score_quartile
+FROM profiles
+ORDER BY score DESC;
+```
 
 ### 3. `PARTITION BY`
 
@@ -960,7 +1008,63 @@ ORDER BY score DESC;
 `UNBOUNDED PRECEDING` means “start at the first row” and `CURRENT ROW` means
 “include this row”. The first running total is 92 and the final total is 335.
 
-Common window-frame phrases:
+### Understanding `ROWS BETWEEN`
+
+The window frame is the smaller group of rows that a function uses for the
+current row. The full window may contain every row, but the frame can be
+limited to rows before, after, or around the current row.
+
+General syntax:
+
+```sql
+function_name(value) OVER (
+    ORDER BY sort_column
+    ROWS BETWEEN frame_start AND frame_end
+)
+```
+
+For every output row, SQL moves the frame relative to that row:
+
+| Frame boundary | Meaning |
+| --- | --- |
+| `UNBOUNDED PRECEDING` | Start at the first row in the ordered window |
+| `N PRECEDING` | Include up to `N` rows before the current row |
+| `CURRENT ROW` | The row currently being calculated |
+| `N FOLLOWING` | Include up to `N` rows after the current row |
+| `UNBOUNDED FOLLOWING` | End at the last row in the ordered window |
+
+For example, with scores ordered from highest to lowest:
+
+| Current row | `1 PRECEDING` | `CURRENT ROW` | `1 FOLLOWING` |
+| --- | --- | --- | --- |
+| Anuj (92) | none | Anuj | Rohan |
+| Rohan (81) | Anuj | Rohan | Akash |
+| Akash (68) | Rohan | Akash | Simran |
+
+`UNBOUNDED PRECEDING` and `UNBOUNDED FOLLOWING` do not mean “the current
+row”. They are the start and end boundaries of the ordered window. For
+example, this frame includes every row for every calculation:
+
+```sql
+ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+```
+
+This is useful with `LAST_VALUE`, because the default frame can stop at the
+current row:
+
+```sql
+SELECT
+    full_name,
+    score,
+    LAST_VALUE(score) OVER (
+        ORDER BY score DESC
+        ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+    ) AS lowest_score
+FROM profiles
+ORDER BY score DESC;
+```
+
+Common frame choices:
 
 | Frame | Meaning |
 | --- | --- |
@@ -989,6 +1093,26 @@ ORDER BY score DESC;
 
 The first row uses itself and the next row because there is no previous row.
 Middle rows use the previous, current, and next rows.
+
+The same idea can be used for other calculations:
+
+```sql
+-- The current row and the next two rows.
+SELECT
+    full_name,
+    score,
+    SUM(score) OVER (
+        ORDER BY score DESC
+        ROWS BETWEEN CURRENT ROW AND 2 FOLLOWING
+    ) AS current_and_next_two_total
+FROM profiles
+ORDER BY score DESC;
+```
+
+`ROWS` counts physical rows. When an ordered column contains duplicate
+values, `RANGE` may include all tied rows with the same ordering value.
+Use `ROWS` when you need an exact number of rows and make the ordering
+deterministic by adding a tie-breaker such as `profile_id`.
 
 ### 7. `LAG` and `LEAD`
 
@@ -1021,7 +1145,48 @@ ORDER BY score DESC;
 
 Here, the missing value at either end is shown as `0` instead of `NULL`.
 
-### 8. Filter a window result with a CTE
+`FIRST_VALUE`, `LAST_VALUE`, and `NTH_VALUE` read a value from a position in
+the current window. An explicit frame is important for `LAST_VALUE`, because
+the default frame often ends at the current row:
+
+```sql
+SELECT
+    full_name,
+    score,
+    FIRST_VALUE(score) OVER (
+        ORDER BY score DESC
+    ) AS highest_score,
+    LAST_VALUE(score) OVER (
+        ORDER BY score DESC
+        ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+    ) AS lowest_score
+FROM profiles
+ORDER BY score DESC;
+```
+
+### 8. Distribution functions
+
+`PERCENT_RANK()` returns a relative rank from `0` to `1`. `CUME_DIST()`
+returns the proportion of rows less than or equal to the current row in the
+window:
+
+```sql
+SELECT
+    full_name,
+    score,
+    ROUND(
+        PERCENT_RANK() OVER (ORDER BY score DESC)::numeric,
+        2
+    ) AS percent_rank,
+    ROUND(
+        CUME_DIST() OVER (ORDER BY score DESC)::numeric,
+        2
+    ) AS cumulative_distribution
+FROM profiles
+ORDER BY score DESC;
+```
+
+### 9. Filter a window result with a CTE
 
 Window functions are calculated after `WHERE`, so calculate the window value
 in a CTE and filter it outside:
