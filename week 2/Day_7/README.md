@@ -6,7 +6,7 @@ execution time.
 
 The main implementation for this topic is:
 
-- [`week 2/Day_7/memory_management.py`](./week%202/Day_7/memory_management.py)
+- [`memory_management.py`](./memory_management.py)
 
 This README teaches the subject from the beginning and then explains the
 actual implementation. It does not invent benchmark numbers: memory usage and
